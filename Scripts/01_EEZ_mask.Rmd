@@ -1,0 +1,126 @@
+---
+title: "Creating_raster_mask"
+author: "Denisse Fierro Arcos"
+date: "2023-11-18"
+output:
+  github_document:
+    toc: true
+    html_preview: false
+---
+
+## Introduction
+
+In this notebook, we will show how to create a raster mask that can be used to extract data from Earth System Models. We will the transform this mask into a table. We will use the Exclusive Economic Zone (EEZ) shapefile from the [Flanders Marine Institute (2019), version 11](https://doi.org/10.14284/386). This shapefiles does not contain any overlapping boundaries, so we will create two-dimensional masks that will match the various grids used in the Fish-MIP project.  
+  
+# Loading libraries
+  
+```{r libraries}
+#Spatial data
+library(sf)
+library(terra)
+
+#Manipulating and plotting data
+library(dplyr)
+library(stringr)
+library(ggplot2)
+
+#Base map
+library(rnaturalearth)
+```
+  
+# Loading EEZ shapefile
+
+```{r}
+#Loading shapefile
+eez_shp <- read_sf("../../World_EEZ_v11_20191118/eez_short.shp")
+
+#Checking result
+ne_countries(returnclass = "sf") |> 
+  ggplot()+
+  geom_sf()+
+  geom_sf(inherit.aes = F, data = eez_shp, aes(fill = SOVEREIGN1), alpha = 0.7)+
+  theme_bw()+
+  theme(legend.position = "none")
+```
+  
+The EEZs are correctly plotted, now we can move onto creating raster masks. In total, we will create four different masks to match all inputs and outputs used in Fish-MIP.  
+  
+# Finding location of raster samples
+We have a folder containing samples of the raster used in Fish-MIP models and ESMs. We will list all the files contained in that folder.    
+  
+```{r}
+sample_rasters <- list.files("../ESM_Sample_Data/", pattern = ".nc$", full.names = T)
+sample_rasters
+```
+  
+We will define a function that will go through each sample file and create a mask.  
+  
+```{r}
+shp_to_raster <- function(shp, raster_path, out_folder){
+  #Transforming shapefile to SpatVector class
+  shp_terra <- vect(shp)
+  #Loading raster
+  ras <- rast(raster_path)
+  #Rasterise shapefile
+  shp_rast <- rasterize(shp_terra, ras, field = "MRGID", background = NA)
+  #Create name for mask to be saved from original raster sample
+  file_out <- paste0("EEZ_mask", 
+                     str_extract(raster_path, "area(_.*nc)", group = 1))
+  file_out <- file.path(out_folder, file_out)
+  writeCDF(shp_rast, file_out, overwrite = T, varname = "eez", 
+           longname = "Economic_Exclusive_Zones", missval = NA)
+}
+```
+  
+Applying function to all raster samples.  
+  
+```{r}
+#Ensure output folder exists
+out_folder <- "../Outputs/EEZMasks"
+if(!dir.exists(out_folder)){
+  dir.create(out_folder, recursive = T)}
+
+#Applying function creating masks
+for(ras in sample_rasters){
+  shp_to_raster(eez_shp, ras, out_folder)
+}
+```
+  
+# Plotting mask
+We will plot one mask to ensure it has been correctly created.  
+  
+```{r}
+ras <- rast("../Outputs/EEZMasks/EEZ_mask_1deg_DBPM.nc")
+plot(ras)
+```
+  
+# Creating 2D `csv` mask
+We will define a function that we use to create a data frame from the raster masks.  
+  
+```{r}
+mask_df <- function(raster_path){
+  df <- rast(raster_path) %>% 
+    #Transforming form matrix to data frame
+    as.data.frame(xy = T) %>% 
+    #Renaming latitude and longitude columns
+    rename("lon" = "x", "lat" = "y")
+  
+  #Create name for mask to be saved from original raster sample
+  file_out <- str_replace(raster_path, ".nc", ".csv")
+  #Save file
+  write_csv(df, file_out) 
+}
+```
+  
+Now we will apply the function to all the raster masks.
+  
+```{r}
+raster_masks <- list.files(out_folder, pattern = ".nc$", full.names = T)
+
+#Applying function creating csv masks
+for(ras in raster_masks){
+  mask_df(ras)}
+```
+  
+We can now use these masks to extract data from any rasters sharing the same grid as the mask.  
+  
