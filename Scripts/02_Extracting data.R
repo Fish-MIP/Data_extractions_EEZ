@@ -96,7 +96,7 @@ sum_bio <- function(ras, eez_mask, meta){
 # Defining output folder --------------------------------------------------
 output_folder <- "Outputs/biomass_summaries"
 if(dir.exists(output_folder) == F){
-  dir.create(output_folder)
+  dir.create(output_folder, recursive = T)
 }
 
 
