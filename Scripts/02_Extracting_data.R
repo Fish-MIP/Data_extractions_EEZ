@@ -20,99 +20,70 @@ input_folder <- "/rd/gem/private/users/camillan/Extract_tcblog10_Data/Output/ras
 input_files <- list.files(input_folder, pattern = "global", full.names = T)
 
 # Masks -------------------------------------------------------------------
-mask_all <- rast("Outputs/EEZMasks/EEZ_mask_1deg.nc")
+eez_mask <- rast("Outputs/EEZMasks/EEZ_mask_1deg.nc")
+eez_df <- read_csv("Outputs/EEZMasks/EEZ_mask_1deg.csv") |> 
+  rename(x = lon, y = lat)
+#Load EEZ keys
+keys <- read_csv("Outputs/EEZMasks/eez_key.csv") |> 
+  select(!c(AREA_KM2, POL_TYPE)) |> 
+  rename(eez = MRGID)
 
 
 # Grid cell area ----------------------------------------------------------
-area <- rast("ESM_Sample_Data/area_1deg.nc")
+#Loading the area prevent us from having to calculate the area every time a new
+#file is loaded. This way we reduce computational resources needed to run script
+area_df <- rast("ESM_Sample_Data/area_1deg.nc") |> 
+  as.data.frame(xy = T) |> 
+  #Keeping only grid cells inside EEZs
+  right_join(eez_df, by = c("x", "y"))
 
 
 # Define functions --------------------------------------------------------
 #Extract data by EEZ
-sum_bio <- function(ras, area, eez_mask, meta){
-  #Create empty data frame to store results
-  summaries_biomass <- data.frame()
-  #Getting years from biomass raster
-  yrs <- str_remove(names(ras), "index_")
-  #Reproject EEZ mask to match biomass raster if not the same
+summarise_bio <- function(ras, area_df, eez_mask, meta, keys){
+  #if CRS does not match, reproject data
+  #Crop EEZ to raster if not the same
   if(crs(ras) != crs(eez_mask)){
     eez_mask <- project(eez_mask, ras)
   }
-  #Get unique EEZ IDs in mask
-  unique_id <- unique(eez_mask) |> 
-    pull()
-  #Extract each EEZ and apply mask
-  for(i in unique_id){
-    #Get single EEZ
-    eez <- eez_mask == i
-    eez[eez == 0] <- NA
-    #Apply EEZ mask
-    weighted_eez <- ras*eez
-    #Transform into tabular form
-    weighted_eez <- as.data.frame(weighted_eez) 
-
-
-#Multiply raster by area and transform to terra
-weight_mask <- function(ras_multi, weight){
-  #Crop if extent is not the same
-  if(crs(ras_multi) != crs(weight)){
-    weight <- crop(weight, ext(ras_multi))
-  }
-  multi <- list()
-  for(i in 1:dim(ras_multi)[3]){
-    ras <- rast(ras_multi[[i]])
-    multi[[i]] <- ras*weight
-  }
-  multi_ras <- rast(multi)
-  return(multi_ras)
-}
-
-#Extract data by EEZ
-sum_bio <- function(ras, eez_mask, meta){
-  #Create empty data frame to store results
-  summaries_biomass <- data.frame()
-  #Getting years from biomass raster
-  yrs <- str_remove(names(ras), "index_")
-  #Crop EEZ to raster if not the same
-  if(ext(ras) != ext(eez_mask)){
-    eez_mask <- crop(eez_mask, ext(ras))
-  }
-  #Get unique EEZ IDs in mask
-  unique_id <- unique(eez_mask) |> 
-    pull()
-  #Extract each EEZ and apply mask
-  for(i in unique_id){
-    #Get single EEZ
-    eez <- eez_mask == i
-    eez[eez == 0] <- NA
-    #Apply EEZ mask
-    weighted_eez <- ras*eez
-    #Transform into tabular form
-    weighted_eez <- as.data.frame(weighted_eez) 
-    #Correct names in data frame - Use years
-    names(weighted_eez) <- yrs
-    #Make table longer to calculate sums per year
-    w_e <- weighted_eez |> 
-      pivot_longer(cols = everything(), names_to = "year", values_to = "biomass") |> 
-      #Group by year
-      group_by(year) |> 
-      #Add all biomass values
-      summarise(total_biomass_g_m2 = sum(biomass, na.rm = F),
-                mean_weighted_biomass_G_m2 = mean(biomass, na.rm = F)) |> 
-      #Add code for EEZ
-      mutate(eez = i)
-    summaries_biomass <- summaries_biomass |> 
-      bind_rows(w_e)
-  }
-  #Adding metadata
-  summaries_biomass <- summaries_biomass |> 
+  #Applying EEZ binary mask to biomass data
+  masked_bio <- ras*eez_mask
+  #Transforming masked biomass data into data frame
+  masked_bio_df <- masked_bio |> 
+    as.data.frame(xy = T)
+  #Merge with data frame with area and EEZ codes
+  summaries_biomass <- masked_bio_df |> 
+    left_join(area_df, by = c("x", "y")) |> 
+    #Group by EEZ
+    group_by(eez) |> 
+    #Add area of grid cells per EEZ
+    mutate(area_tot = sum(area_m, na.rm = T), 
+           #Calculate weights (area grid cell/total area EEZ)
+           weight = area_m/area_tot) |> 
+    #Calculating total and weighted means of biomass per EEZ and year
+    pivot_longer(cols = starts_with("index_"),
+                 names_to = "year", values_to = "biomass") |>
+    #Remove prefix from year column
+    mutate(year = str_remove(year, "index_"),
+           #Calculate total biomass per grid cell
+           biomass_grid = biomass*area_tot,
+           #Apply weight to biomass
+           biomass_weighted = biomass*weight) |> 
+    #Calculations per year and EEZ
+    group_by(year, eez) |> 
+    #Calculate total biomass
+    summarise(sum_biomass = sum(biomass_grid, na.rm = T),
+              #Calculate weighted means
+              mean_biomass = sum(biomass_weighted, na.rm = T)) |> 
+    #Add metadata - Model, ESM and scenario
     mutate(model = meta[1, 1], 
            esm = meta[1, 2],
-           scenario = meta[1, 3])
-  
+           scenario = meta[1, 3]) |> 
+    #Adding information about EEZs
+    left_join(keys, by = "eez")
   return(summaries_biomass)
-}
-
+  }
+  
 
 # Defining output folder --------------------------------------------------
 output_folder <- "Outputs/biomass_summaries"
@@ -123,46 +94,28 @@ if(dir.exists(output_folder) == F){
 
 # Applying functions to all files -----------------------------------------
 for(f in input_files){
+  # # CN trial - issue explained in email
+  # # problem: 
+  # f = "/rd/gem/private/users/camillan/Extract_tcblog10_Data/Output/raster_annual_sumSize/2023-11-15_01_raster_annual_sumSize_apecosm_ipsl_historical_global.rds"
+  # # OK - saved as terra instead of raster 
+  # f = "/rd/gem/private/users/camillan/Extract_tcblog10_Data/Output/raster_annual_sumSize/2023-11-20_01_raster_annual_sumSize_zoomss_gfdl_historical_global.rds"
+  
   #Read file
   brick <- readRDS(f)
-  #Turn into terra
-  brick <- brick[[names(brick)]]
-  
-  #Calculate area
-  area <- cellSize(brick[[1]])
-  
-  #Define correct mask
-  if(str_detect(f, "dbpm|zoomss_ipsl")){
-    mask <- mask_dbpm
-  }else{
-    mask <- mask_all
-  }
-  
+
   #Metadata to be added to file
   meta <- str_extract(f, ".*sumSize_(.*)", group = 1) |> 
     str_split(pattern = "_", simplify = T)
   
-  #Weighting data
-  weighted_terra <- weight_mask(brick, area)
   #Calculating summaries
-  summaries <- sum_bio(weighted_terra, mask, meta)
+  summaries <- summarise_bio(brick, area_df, eez_mask, meta, keys)
   
   #Getting output file name from original name
-  out_name <- str_extract(f, ".*sumSize_(.*)", group = 1) |> 
+  out_name <- str_extract(f, ".*sumSize_(.*)", group = 1) |>
     str_replace("rds", "csv")
-  
+
   #Saving summaries
-  summaries |> 
+  summaries |>
     write_csv(file.path(output_folder, out_name))
 }
-
-
-
-
-
-
-
-
-
-
 
