@@ -17,24 +17,45 @@ library(tidyr)
 input_folder <- "/rd/gem/private/users/camillan/Extract_tcblog10_Data/Output/raster_annual_sumSize"
 
 #Getting list of biomass files
-input_files <- list.files(input_folder, full.names = T)
-
+input_files <- list.files(input_folder, pattern = "global", full.names = T)
 
 # Masks -------------------------------------------------------------------
 mask_all <- rast("Outputs/EEZMasks/EEZ_mask_1deg.nc")
-mask_dbpm <- rast("Outputs/EEZMasks/EEZ_mask_1deg_DBPM.nc")
 
 
 # Grid cell area ----------------------------------------------------------
-area_all <- rast("ESM_Sample_Data/area_1deg.nc")
-area_dbpm <- rast("ESM_Sample_Data/area_1deg_DBPM.nc")
+area <- rast("ESM_Sample_Data/area_1deg.nc")
 
 
 # Define functions --------------------------------------------------------
+#Extract data by EEZ
+sum_bio <- function(ras, area, eez_mask, meta){
+  #Create empty data frame to store results
+  summaries_biomass <- data.frame()
+  #Getting years from biomass raster
+  yrs <- str_remove(names(ras), "index_")
+  #Reproject EEZ mask to match biomass raster if not the same
+  if(crs(ras) != crs(eez_mask)){
+    eez_mask <- project(eez_mask, ras)
+  }
+  #Get unique EEZ IDs in mask
+  unique_id <- unique(eez_mask) |> 
+    pull()
+  #Extract each EEZ and apply mask
+  for(i in unique_id){
+    #Get single EEZ
+    eez <- eez_mask == i
+    eez[eez == 0] <- NA
+    #Apply EEZ mask
+    weighted_eez <- ras*eez
+    #Transform into tabular form
+    weighted_eez <- as.data.frame(weighted_eez) 
+
+
 #Multiply raster by area and transform to terra
 weight_mask <- function(ras_multi, weight){
   #Crop if extent is not the same
-  if(ext(ras_multi) != ext(weight)){
+  if(crs(ras_multi) != crs(weight)){
     weight <- crop(weight, ext(ras_multi))
   }
   multi <- list()
@@ -107,13 +128,14 @@ for(f in input_files){
   #Turn into terra
   brick <- brick[[names(brick)]]
   
-  #Locate correct mask and area
+  #Calculate area
+  area <- cellSize(brick[[1]])
+  
+  #Define correct mask
   if(str_detect(f, "dbpm|zoomss_ipsl")){
     mask <- mask_dbpm
-    area <- area_dbpm
   }else{
     mask <- mask_all
-    area <- area_all
   }
   
   #Metadata to be added to file
