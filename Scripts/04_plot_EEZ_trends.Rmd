@@ -1,0 +1,221 @@
+---
+title: "Extract tcblog10 data from FishMIP ecosystem models"
+author: "Camilla Novaglio"
+date: "13/10/2023"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### AIM
+
+continue analysis as per 01 
+
+## Read in data and plot maps of % change and trends  
+
+```{r}
+
+rm(list=ls())
+
+library(ggplot2) 
+library(dplyr, warn.conflicts = FALSE)
+library(stringr)
+library(patchwork)
+
+input_folder<-"/rd/gem/private/users/camillan/Extract_tcblog10_Data/Output/terra_annual_sumSize/EEZsummaries"
+input_files <- list.files(input_folder, full.names = T)
+tables <- lapply(input_files, read.csv, header = TRUE)
+df <- do.call(rbind , tables)
+head(df)
+
+# sort(unique(df$GEONAME))
+# sort(unique(df$SOVEREIGN1)) # I guess this is what i should be using??? explore the NA 
+# filter(df, is.na(df$GEONAME))
+# filter(df, is.na(df$SOVEREIGN1))
+
+## suggested countries 
+# São Tome et Principe -> "Sao Tome and Principe" in sovrein, "Sao Tome and Principe Exclusive Economic Zone" in geoname 
+# Philippines 
+# West Africa: Cabo Verde, Côte d'Ivoire, and Senegal 
+# Vietnam, Indonesia, India, Sri Lanka, and the Maldives 
+# GCLME countries ???
+# somalia
+# chile 
+# peru 
+# argentina
+# mexico
+# OECS countries ???
+
+countries<-c("Sao Tome and Principe", "Philippines","Cape Verde","Ivory Coast", "Senegal", "Vietnam","Indonesia", "India", "Sri Lanka" ,"Maldives","Federal Republic of Somalia", "Chile", "Peru", "Argentina", "Mexico" )
+
+```
+
+## trends of % change
+
+```{r}
+
+# calculate % change relative to ref value taken from hist annual weighted mean (e.g. 1990s) 
+# USING CODE FROM MITIGATION (BUT % CHANGE INSTEAD OF DELTA)
+
+plot_trend<-function(SumsAllBio_df, 
+                     country_name, 
+                     endYear){
+
+  
+  SumsAllBio_df<-df %>% 
+    filter(SOVEREIGN1 == country_name) %>% 
+    select(year,scenario, esm, model, sum_biomass, mean_biomass) %>% 
+    dplyr::rename(mem = model) %>% 
+    group_by(year, scenario, esm, mem) %>% 
+    # we cannot do the same for mean_biomass, we would need to re-run Denisse's code using SOVEREIGN1 for the EEZ aggregation
+    dplyr::summarise(sum_biomass = sum(sum_biomass)) %>% 
+    ungroup() %>% 
+    filter(year>=1990, year<=endYear)
+  
+  # do % in summed biomass equal % in mean biomass? if so, no need to care abput mean biomass right now. 
+  
+  temp<-SumsAllBio_df %>% 
+    mutate(id = paste0(esm, mem)) 
+  temp<-split(temp, temp$id)
+
+  change_perc<-function(temp){
+    
+    reference <- temp %>%
+      filter(year >= 2005 , year <= 2014) %>% 
+      group_by() %>%
+      summarise(ref = mean(sum_biomass, na.rm = TRUE))
+
+    reference<-reference$ref
+
+    temp2<-temp %>%
+      mutate(perc_change = ((sum_biomass - reference)/reference)*100) %>% 
+      select(-sum_biomass, -id)
+    
+    return(temp2)
+  }
+  
+  temp2<-lapply(temp, function(x) change_perc(x))
+  
+  perc_change<-do.call(rbind, temp2)
+
+  # multimodel mean and SD 
+  mean_perc_chenge_trends<-perc_change %>% 
+    group_by(year, scenario) %>% 
+    dplyr::summarise(mean_change = mean(perc_change, na.rm = TRUE),
+                     sd_change = sd(perc_change, na.rm = TRUE)) %>% 
+    ungroup()
+
+  plot_trends<-ggplot(data = mean_perc_chenge_trends, aes(x = year, y = mean_change, group = scenario))+
+    geom_line(aes(color = scenario))+
+    geom_ribbon(aes(y = mean_change, ymin = mean_change - sd_change, ymax = mean_change + sd_change, 
+                  fill = scenario), alpha = .2) +
+    theme_bw()+
+    scale_fill_manual("Scenario", values=c("black", "blue", "red"), labels = c("Historical", "SSP1-2.6", "SSP5-8.5"))+
+    scale_color_manual("Scenario", values=c("black", "blue", "red"), labels = c("Historical", "SSP1-2.6", "SSP5-8.5"))+
+    geom_vline(xintercept = 2014.5, color = "black", linetype ="dashed")+
+    ylab("Change in exploitable \n animal biomass (%)") + 
+    xlab("Year")+
+    theme(
+    # panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(), 
+      panel.background = element_blank())+
+    ggtitle(country_name)
+  
+  return(plot_trends)
+
+}
+
+plots_2050<-lapply(countries, function(x) plot_trend(SumsAllBio_df, x, endYear = 2050))
+names(plots_2050)<-countries
+
+africa_2050 <-plots_2050$`Sao Tome and Principe` + 
+  plots_2050$`Cape Verde`+
+  plots_2050$`Ivory Coast`+ 
+  plots_2050$Senegal + 
+  plots_2050$`Federal Republic of Somalia` + 
+  plot_layout(ncol = 3, guides = "collect")
+
+southAmerica_2050 <-plots_2050$Chile + 
+  plots_2050$Peru + 
+  plots_2050$Argentina + 
+  plots_2050$Mexico+
+  plot_layout(ncol = 2, guides = "collect")
+
+asia_2050<-plots_2050$Philippines + 
+  plots_2050$Vietnam + 
+  plots_2050$Indonesia + 
+  plots_2050$India + 
+  plots_2050$`Sri Lanka` + 
+  plots_2050$Maldives + 
+  plot_layout(ncol = 3, guides = "collect")
+
+plots_2100<-lapply(countries, function(x) plot_trend(SumsAllBio_df, x, endYear = 2100))
+names(plots_2100)<-countries
+
+africa_2100 <-plots_2100$`Sao Tome and Principe` + 
+  plots_2100$`Cape Verde`+
+  plots_2100$`Ivory Coast`+ 
+  plots_2100$Senegal + 
+  plots_2100$`Federal Republic of Somalia` + 
+  plot_layout(ncol = 3, guides = "collect")
+
+southAmerica_2100 <-plots_2100$Chile + 
+  plots_2100$Peru + 
+  plots_2100$Argentina + 
+  plots_2100$Mexico+
+  plot_layout(ncol = 2, guides = "collect")
+
+asia_2100<-plots_2100$Philippines + 
+  plots_2100$Vietnam + 
+  plots_2100$Indonesia + 
+  plots_2100$India + 
+  plots_2100$`Sri Lanka` + 
+  plots_2100$Maldives + 
+  plot_layout(ncol = 3, guides = "collect")
+
+
+### OK smaller text and maybe not grids 
+name_Fig = paste("Output/", Sys.Date(),"_" ,"Africa_2050_percChange_EEZ.pdf", sep = "")
+
+pdf(name_Fig, width = 10, height = 5, bg = "transparent")
+africa_2050
+dev.off()
+
+name_Fig = paste("Output/", Sys.Date(),"_" ,"Africa_2100_percChange_EEZ.pdf", sep = "")
+
+pdf(name_Fig, width = 10, height = 5, bg = "transparent")
+africa_2100
+dev.off()
+
+name_Fig = paste("Output/", Sys.Date(),"_" ,"Asia_2050_percChange_EEZ.pdf", sep = "")
+
+pdf(name_Fig, width = 10, height = 5, bg = "transparent")
+asia_2050
+dev.off()
+
+name_Fig = paste("Output/", Sys.Date(),"_" ,"Asia_2100_percChange_EEZ.pdf", sep = "")
+
+pdf(name_Fig, width = 10, height = 5, bg = "transparent")
+asia_2100
+dev.off()
+
+name_Fig = paste("Output/", Sys.Date(),"_" ,"SouthAmerica_2050_percChange_EEZ.pdf", sep = "")
+
+pdf(name_Fig, width = 10, height = 5, bg = "transparent")
+southAmerica_2050
+dev.off()
+
+name_Fig = paste("Output/", Sys.Date(),"_" ,"SouthAmerica_2100_percChange_EEZ.pdf", sep = "")
+
+pdf(name_Fig, width = 10, height = 5, bg = "transparent")
+southAmerica_2100
+dev.off()
+
+
+
+
+```

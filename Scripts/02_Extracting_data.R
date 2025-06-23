@@ -15,22 +15,25 @@ library(tidyr)
 # Biomass inputs ----------------------------------------------------------
 #Location of files containing biomass
 # terra objects saved as rds files - working with this 
-input_folder <- "/rd/gem/private/users/camillan/Extract_tcblog10_Data/Output/terra_annual_sumSize"
+#input_folder <- "/rd/gem/private/users/camillan/Extract_tcblog10_Data/Output/terra_annual_sumSize"
+input_folder <- "/rd/gem/private/users/camillan/Extract_tcblog10_Data/Output/sumSize_annual/sizeConsidered10g_10kg"
+
 
 #Getting list of biomass files
-input_files <- list.files(input_folder, pattern = "2023-11-21.+global", full.names = T)
+#input_files <- list.files(input_folder, pattern = "2023-11-21.+global", full.names = T)
+input_files <- list.files(input_folder, pattern = "2023-11-23.+global", full.names = T)
 
 # or raster objects saved as grd (+gri) files- not working 
-input_folderB <- "/rd/gem/private/users/camillan/Extract_tcblog10_Data/Output/raster_annual_sumSize"
+#input_folderB <- "/rd/gem/private/users/camillan/Extract_tcblog10_Data/Output/raster_annual_sumSize"
 
 #Getting list of biomass files
-input_filesB <- list.files(input_folderB, pattern = "2023-11-21.+global", full.names = T)
+#input_filesB <- list.files(input_folderB, pattern = "2023-11-21.+global", full.names = T)
 
 # plot terra object 
 # plot same but raster objects
 # seems the same 
-plot(rast(input_files[4])) # "2023-11-21_01_raster_annual_sumSize_boats_gfdl_historical_global.rds" 
-plot(brick(input_filesB[7])) # 2023-11-21_01_raster_annual_sumSize_boats_gfdl_historical_global.grd"
+#plot(rast(input_files[4])) # "2023-11-21_01_raster_annual_sumSize_boats_gfdl_historical_global.rds" 
+#plot(brick(input_filesB[7])) # 2023-11-21_01_raster_annual_sumSize_boats_gfdl_historical_global.grd"
 
 # Masks -------------------------------------------------------------------
 eez_mask <- rast("Outputs/EEZMasks/EEZ_mask_1deg.nc")
@@ -56,24 +59,26 @@ area_df <- area |>
 
 # Define functions --------------------------------------------------------
 #Extract data by EEZ
-summarise_bio <- function(ras, area_df, eez_mask, meta, keys){
+#summarise_bio <- function(ras, area_df, eez_mask, meta, keys){
+summarise_bio <- function(ras, area_df, eez_mask, keys){
   
   # # CN trial 
   # ras = brick
   
   #if CRS does not match, reproject data
   #Crop EEZ to raster if not the same
-  if(crs(ras) != crs(eez_mask)){
-    eez_mask <- project(eez_mask, ras)
-  }
+  # if(crs(ras) != crs(eez_mask)){
+  #   eez_mask <- project(eez_mask, ras)
+  # }
   
   # ## CN NO! here you are multiplying the biomass by the EEZ number
   # #Applying EEZ binary mask to biomass data
   # masked_bio <- ras*eez_mask
   masked_bio<-ras
   #Transforming masked biomass data into data frame
-  masked_bio_df <- masked_bio |> 
-    as.data.frame(xy = T)
+  # masked_bio_df <- masked_bio |> 
+  #   as.data.frame(xy = T)
+  masked_bio_df<-masked_bio
   
   # ## CN checks and understanding this 
   # trial<-masked_bio_df |> 
@@ -105,22 +110,22 @@ summarise_bio <- function(ras, area_df, eez_mask, meta, keys){
   ## CN approach: 
   summaries_biomass <- masked_bio_df |> 
     left_join(area_df, by = c("x", "y")) |> 
-    #Calculating total and weighted means of biomass per EEZ and year
-    pivot_longer(cols = starts_with("index_"),
-                 names_to = "year", values_to = "biomass") |>
-    #Remove prefix from year column & calculate biomass in each grid cell given area  
-    mutate(year = str_remove(year, "index_"),
-           biomass_grid = biomass*area_m) |>
-    group_by(year, eez) %>% 
-    summarise(sum_biomass = sum(biomass_grid, na.rm = TRUE), 
-              mean_biomass = weighted.mean(biomass, area_m, na.rm = TRUE)) |>
-    ungroup() |>
-    #Add metadata - Model, ESM and scenario
-    mutate(model = meta[1, 1], 
-          esm = meta[1, 2],
-          scenario = meta[1, 3]) |> 
-    #Adding information about EEZs
-    left_join(keys, by = "eez")
+    # #Calculating total and weighted means of biomass per EEZ and year
+    # # pivot_longer(cols = starts_with("index_"),
+    # #              names_to = "year", values_to = "biomass") |>
+    # #Remove prefix from year column & calculate biomass in each grid cell given area  
+    # mutate(#year = str_remove(year, "index_"),
+    #        biomass_grid = biomass*area_m) |>
+    # group_by(year, eez,mem,esm,scenario) %>% 
+    # summarise(sum_biomass = sum(biomass_grid, na.rm = TRUE), 
+    #           mean_biomass = weighted.mean(biomass, area_m, na.rm = TRUE)) |>
+    # ungroup() |>
+    # #Add metadata - Model, ESM and scenario
+    # # mutate(model = meta[1, 1], 
+    # #       esm = meta[1, 2],
+    # #       scenario = meta[1, 3]) |> 
+    # #Adding information about EEZs
+     left_join(keys, by = "eez")
   
   # #Merge with data frame with area and EEZ codes
   # # Denisse's appraoch
@@ -175,8 +180,9 @@ summarise_bio <- function(ras, area_df, eez_mask, meta, keys){
 #   dir.create(output_folder, recursive = T)
 # }
 
-output_folder<-"/rd/gem/private/users/camillan/Extract_tcblog10_Data/Output/terra_annual_sumSize/EEZsummaries"
+#output_folder<-"/rd/gem/private/users/camillan/Extract_tcblog10_Data/Output/terra_annual_sumSize/EEZsummaries"
 
+output_folder<-"/rd/gem/private/users/camillan/Extract_tcblog10_Data/Output/sumSize_annual/sizeConsidered10g_10kg/EEZsummaries"
 
 # Applying functions to all files -----------------------------------------
 for(f in input_files){ # or input_filesB if using raster objects
@@ -189,7 +195,8 @@ for(f in input_files){ # or input_filesB if using raster objects
   # f = input_files[1]
   
   #Read file
-  brick <- readRDS(f)
+  brick0 <- readRDS(f)
+  brick = brick0[[1]]
   # plot(brick)
   # if using raster .grd object (input_filesB) - ERROR: [rast] cannot open this file as a SpatRaster
   # brick <-rast(f)
@@ -197,18 +204,31 @@ for(f in input_files){ # or input_filesB if using raster objects
   # brick <-brick(f)
 
   #Metadata to be added to file
-  meta <- str_extract(f, ".*sumSize_(.*)", group = 1) |> 
-    str_split(pattern = "_", simplify = T)
+  # meta <- str_extract(f, ".*sumSize_(.*)", group = 1) |> 
+  #   str_split(pattern = "_", simplify = T)
   
   #Calculating summaries
-  summaries <- summarise_bio(brick, area_df, eez_mask, meta, keys)
+ # summaries <- summarise_bio(brick, area_df, eez_mask, meta, keys)
+  summaries <- summarise_bio(brick, area_df, eez_mask, keys)
   
   #Getting output file name from original name
-  out_name <- str_extract(f, ".*sumSize_(.*)", group = 1) |>
-    str_replace("rds", "csv")
-
+ # out_name <- str_extract(f, ".*sumSize_(.*)", group = 1) |>
+ #   str_replace("rds", "csv")
+  out_name = paste(names(brick0),"_global_gridded",".csv",sep="")
   #Saving summaries
   summaries |>
     write_csv(file.path(output_folder, out_name))
+  
+  
 }
+
+
+# combine all files into a df
+
+input_folder<-"/rd/gem/private/users/camillan/Extract_tcblog10_Data/Output/sumSize_annual/sizeConsidered10g_10kg/EEZsummaries"
+input_files <- list.files(input_folder, full.names = T)
+tables <- lapply(input_files, read.csv, header = TRUE)
+df <- do.call(rbind , tables)
+head(df)
+
 
